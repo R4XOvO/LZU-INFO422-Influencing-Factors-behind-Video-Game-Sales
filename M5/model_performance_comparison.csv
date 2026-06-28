@@ -1,3 +1,4 @@
 ,R²,RMSE,MAE
 Multiple Linear Regression,0.3123,0.2592,0.173
 Random Forest Regressor,0.3937,0.2434,0.1585
+Two-Stage RF (Blockbuster-Aware),0.3775,0.2466,0.1594

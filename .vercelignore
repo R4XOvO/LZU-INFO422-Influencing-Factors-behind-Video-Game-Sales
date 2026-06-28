@@ -1,0 +1,18 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.ipynb_checkpoints
+vgchartz-2024.csv
+M2 & M3
+M4
+M5
+__pycache__
+*.log
+*.egg-info
+dist
+build

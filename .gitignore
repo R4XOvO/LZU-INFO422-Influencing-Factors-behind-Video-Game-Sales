@@ -1,0 +1,10 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+.ipynb_checkpoints
+*.egg-info
+dist
+build
+vgchartz-2024.csv
+.DS_Store

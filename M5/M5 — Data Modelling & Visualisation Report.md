@@ -7,11 +7,11 @@
 
 ## Executive Summary
 
-This report builds and evaluates two regression models to predict global video game sales based on the cleaned_vgchartz.csv dataset (8,786 records, 33 features), following the CRISP-DM framework.
+This report builds and evaluates three regression models to predict global video game sales based on the cleaned_vgchartz.csv dataset (8,786 records, 33 features), following the CRISP-DM framework.
 
-Multiple Linear Regression serves as the interpretable baseline, while the Random Forest Regressor captures non-linear relationships and feature interactions. Models are evaluated via R², RMSE and MAE, with the Random Forest achieving a test set R² of 0.3937, outperforming the linear baseline by approximately 26%.
+Multiple Linear Regression serves as the interpretable baseline, while the Random Forest Regressor captures non-linear relationships and feature interactions. A third **two-stage blockbuster-aware model** is added to directly address the long-tail underestimation identified in M5: a classifier flags likely blockbusters and blends their predictions toward a dedicated blockbuster regressor. Models are evaluated via R², RMSE and MAE, with the Random Forest achieving the best overall test set R² of 0.3937, outperforming the linear baseline by approximately 26%. The two-stage model trades a small amount of overall accuracy for a 6.7% reduction in blockbuster-segment RMSE, the segment it was designed to serve.
 
-Three stakeholder-facing visualisations are provided to communicate model performance, feature importance and prediction reliability, alongside a full discussion of model limitations and failure modes. All M5 assignment requirements are fulfilled.
+Four stakeholder-facing visualisations are provided to communicate model performance, feature importance, prediction reliability and blockbuster lift, alongside a full discussion of model limitations and failure modes. All M5 assignment requirements are fulfilled.
 
 ## 1. Introduction & Research Objectives
 
@@ -60,7 +60,7 @@ All preprocessing steps align with M4 EDA conclusions:
 
 ## 3. Model Selection & Rationale
 
-Two models are selected to cover interpretable baseline and high-performance non-linear use cases:
+Three models are selected: an interpretable baseline, a high-performance non-linear model, and a segment-aware two-stage variant that targets the long-tail blockbuster underestimation identified in M5:
 
 ### 3.1 Multiple Linear Regression
 
@@ -73,6 +73,10 @@ It is selected as the baseline benchmark to quantify the lower bound of predicti
 Random Forest Regressor is an ensemble model that trains multiple independent decision trees via bootstrap sampling and random feature selection, and outputs the average prediction to reduce overfitting.
 
 It is chosen to address the non-linear patterns and feature interactions identified in EDA (e.g. platform-genre synergy, non-linear brand scale effects), which cannot be captured by linear models without manual feature engineering. Its ensemble structure makes it robust to the long-tailed sales outliers in the dataset, and its native feature importance scores directly quantify the contribution of each factor, supporting stakeholder decision-making. It also performs reliably with default parameters with minimal tuning required.
+
+### 3.3 Two-Stage Blockbuster-Aware Model
+
+The two-stage model combines a Random Forest classifier (blockbuster vs. non-blockbuster) with a dedicated blockbuster Random Forest regressor, blended on top of the global Random Forest. It is selected to directly attack the systematic blockbuster underestimation that the residual analysis of Section 5 exposes (predicted mean 0.88 vs actual 1.87 for blockbusters). The hybrid-blend design (Section 5.4) is chosen over hard routing because the blockbuster class is too sparse (0.9%) for a separate regressor to carry the majority of predictions reliably.
 
 ## 4. Evaluation Metrics
 
@@ -106,14 +110,40 @@ Final models are trained on the full training set and evaluated on the unseen te
 |-------|-------------|---------------|--------------|
 | Multiple Linear Regression | 0.3123 | 0.2592 | 0.1730 |
 | Random Forest Regressor | 0.3937 | 0.2434 | 0.1585 |
+| Two-Stage RF (Blockbuster-Aware) | 0.3775 | 0.2466 | 0.1594 |
 
 ### 5.3 Performance Analysis
 
 - **Non-linear advantage**: Random Forest outperforms linear regression across all metrics, with 26% higher R², 6.1% lower RMSE and 8.4% lower MAE on the test set, confirming that non-linear interactions contribute significantly to sales prediction.
-- **Strong generalisation**: No performance drop is observed from cross-validation to the holdout test set for either model, indicating no severe overfitting.
+- **Strong generalisation**: No performance drop is observed from cross-validation to the holdout test set for either baseline model, indicating no severe overfitting.
 - **Baseline value**: The linear model explains 31.2% of sales variance, providing a valid interpretable baseline for linear effect analysis.
+- **Two-stage trade-off**: The two-stage model holds overall R² within 1.6 percentage points of the Random Forest (0.3775 vs 0.3937) while reducing blockbuster-segment RMSE by 6.7% (1.0845 → 1.0122). The Random Forest remains the recommended model for general forecasting; the two-stage model is preferred when blockbuster prediction accuracy is the priority.
 
-### 5.4 Research Question Validation
+### 5.4 Two-Stage Blockbuster-Aware Model
+
+The M4 EDA and the residual analysis of the Random Forest both show that blockbuster titles (total_sales > 3.5M) are systematically under-predicted: on the test set the Random Forest predicts a mean log_sales of 0.88 for blockbusters whose actual mean is 1.87. A two-stage model is introduced to target this segment directly.
+
+**Design — hybrid blend.** Because blockbusters represent only ~0.9% of the training data (62 records), a pure hard-routing two-stage model mis-routes too many non-blockbusters and collapses overall performance. The model therefore uses a hybrid blend:
+
+1. **Stage 1 — Classifier**: a `class_weight="balanced"` Random Forest classifier predicts the probability that a title is a blockbuster.
+2. **Stage 2 — Dedicated blockbuster regressor**: a Random Forest trained only on the 62 blockbuster training records.
+3. **Blending rule**: the global Random Forest is the base predictor for every game. Titles whose classifier probability exceeds 0.60 are blended toward the blockbuster regressor with weight α = 0.30: `pred = 0.30 × blockbuster_reg + 0.70 × base_rf`.
+
+This lifts flagged titles toward their true sales range while protecting the majority class from false-positive damage.
+
+**Classifier performance (test set).** Precision, recall and F1 are reported in place of accuracy because the blockbuster class is heavily imbalanced (18 of 1,758 test records):
+
+| Metric | Value |
+|--------|-------|
+| Precision | 0.16 |
+| Recall | 0.44 |
+| F1 | 0.24 |
+
+The low precision confirms that blockbuster identification from pre-release attributes alone is intrinsically hard, which is exactly why a soft blend (rather than hard routing) is used.
+
+**Blockbuster-segment regression error.** On the 18 test blockbusters, the two-stage model reduces RMSE from 1.0845 (Random Forest) to 1.0122 — a 6.7% improvement on the segment it was designed to serve (see Visualisation 4).
+
+### 5.5 Research Question Validation
 
 Modelling results are used to verify the three core research questions from the project framework:
 
@@ -128,10 +158,18 @@ The dual mechanism of brand effect is fully validated by the model: `publisher_g
 
 ## 6. Stakeholder-Facing Visualisations & Insights
 
+### Visualisation 0: Residual Plot — Two-Stage Blockbuster-Aware Model
+![Visualisation 0](images/viz0_residuals_two_stage.png)
+
+This residual plot shows the prediction error (actual − predicted) against the predicted `log_sales` for the two-stage model on the test set, with a zero-error reference line.
+
+**Core Insight**: Residuals are centred on zero for the mid-range but fan out at higher predicted values, confirming that residual variance grows with sales magnitude — the structural pattern the two-stage model was built to mitigate.
+**Business Application**: Sets expectations for prediction confidence: forecasts are tightest for mid-budget titles and should carry wider uncertainty bands for high-budget projects.
+
 ### Visualisation 1: Model Performance Comparison Chart
 ![Visualisation 1](images/viz1_model_performance_comparison.png)
 
-This side-by-side bar chart compares test set R² and RMSE of the two models.
+This side-by-side bar chart compares test set R² and RMSE across all three models.
 
 **Core Insight**: The Random Forest model delivers higher explanatory power and lower prediction error across both metrics.
 **Business Application**: Used to justify adoption of the Random Forest model for production sales forecasting.
@@ -144,19 +182,27 @@ This horizontal bar chart ranks features by their relative contribution to predi
 **Core Insight**: The top 3 sales drivers are publisher brand scale, critic score and release era; platform and genre effects play secondary but significant roles.
 **Business Application**: Provides data-driven guidance for resource allocation, highlighting publisher partnerships and game quality as the highest-impact levers.
 
-### Visualisation 3: Actual vs Predicted Sales Scatter Plot (Test Set)
+### Visualisation 3: Actual vs Predicted Sales Scatter Plot (Random Forest vs Two-Stage)
 ![Visualisation 3](images/viz3_actual_vs_predicted_sales.png)
 
-This scatter plot compares actual and predicted `log_sales` with a 45-degree reference line for perfect prediction.
+This paired scatter plot compares actual and predicted `log_sales` for the Random Forest (left) and the two-stage model (right), each with a 45-degree reference line for perfect prediction.
 
-**Core Insight**: The model performs reliably for mid-to-low sales games, but consistently underestimates blockbuster sales due to their unique success factors.
-**Business Application**: Defines the model's reliable operating range: suitable for mainstream mid-budget titles, and should be supplemented with qualitative analysis for high-budget blockbuster projects.
+**Core Insight**: Both models perform reliably for mid-to-low sales games; the two-stage model visibly tightens the upper tail where blockbusters sit, lifting previously under-predicted points toward the reference line.
+**Business Application**: Defines the model's reliable operating range: suitable for mainstream mid-budget titles, with the two-stage variant recommended when blockbuster accuracy matters. High-budget projects should still be supplemented with qualitative analysis.
+
+### Visualisation 4: Blockbuster Prediction RMSE Lift
+![Visualisation 4](images/viz4_blockbuster_rmse_lift.png)
+
+This bar chart compares the blockbuster-segment RMSE of the Random Forest and the two-stage model on the 18 test blockbusters.
+
+**Core Insight**: The two-stage model reduces blockbuster RMSE from 1.0845 to 1.0122 (a 6.7% improvement), directly addressing the long-tail underestimation identified in M5.
+**Business Application**: Quantifies the value of segment-specific modelling for blockbuster forecasting and justifies collecting more blockbuster data to widen the gain.
 
 ## 7. Model Limitations & Potential Failure Modes
 
 ### 7.1 Data & Sample Limitations
 - **Digital sales undercount**: The dataset focuses on physical sales, underestimating digital revenue for PC and modern consoles, leading to systematic bias for digital-first titles.
-- **Blockbuster sample scarcity**: Only 2.7% of games are blockbusters (>3.5M sales), resulting in consistent underprediction for top-tier titles.
+- **Blockbuster sample scarcity**: Only 0.9% of records (62 training games) exceed the 3.5M blockbuster threshold, starving both the classifier and the dedicated regressor. The two-stage experiment quantifies this: even a segment-specific model yields only a 6.7% RMSE improvement, confirming that data — not architecture — is the binding constraint.
 - **High-cardinality encoding risk**: Over 500 unique publishers/developers with many small samples may cause overfitting in target encoding for new market entrants.
 - **Japan data quality gap**: 63.7% of Japan sales records are zero-imputed, reducing prediction reliability for the Japanese market.
 
@@ -175,21 +221,22 @@ This scatter plot compares actual and predicted `log_sales` with a 45-degree ref
 
 ### 8.1 Core Conclusion
 
-This analysis builds and validates two sales prediction models, identifying the Random Forest Regressor as the optimal choice with a test set R² of 0.3937. Key findings:
+This analysis builds and validates three sales prediction models, identifying the Random Forest Regressor as the best overall model with a test set R² of 0.3937, and a two-stage blockbuster-aware variant that improves blockbuster-segment RMSE by 6.7%. Key findings:
 1. Non-linear feature interactions significantly improve prediction performance, lifting R² by 26% over the linear baseline.
 2. Publisher brand scale, critic score and release era are the top three sales drivers, consistent with M4 EDA conclusions.
 3. The model performs reliably for mainstream mid-budget games, with limitations for blockbuster prediction and new market adaptation.
+4. The two-stage model partially closes the blockbuster underestimation gap, but the modest gain (6.7% RMSE reduction) empirically confirms that blockbuster scarcity — not model architecture — is the binding constraint.
 
 ### 8.2 Business Recommendations
-- **Model adoption**: Use Random Forest as a decision support tool for mainstream game sales forecasting, not as the sole basis for budget allocation.
+- **Model adoption**: Use Random Forest as a decision support tool for mainstream game sales forecasting, not as the sole basis for budget allocation. Switch to the two-stage variant when blockbuster forecasting is the priority.
 - **Resource prioritisation**: Focus on partnering with established publishers, improving game quality, and optimising release timing to maximise commercial performance.
-- **Blockbuster strategy**: Supplement the model with qualitative analysis and market research for high-budget projects, and consider a dedicated blockbuster prediction model.
+- **Blockbuster strategy**: Supplement the model with qualitative analysis and market research for high-budget projects, and actively expand the blockbuster training sample (e.g. incorporate digital-sales and post-2019 data) to widen the two-stage gain.
 - **Regional strategy**: Build separate regional sub-models for markets like Japan to address data quality and preference heterogeneity.
 - **Regular maintenance**: Retrain the model quarterly with updated data to adapt to evolving market trends and new platforms.
 
 ### 8.3 Future Optimisation Opportunities
 - **Feature expansion**: Add marketing spend, IP attributes, user reviews and competitor data to improve explanatory power.
-- **Hierarchical modelling**: Implement a two-stage classification-then-regression approach to address the long-tailed sales distribution.
+- **Blockbuster data enrichment**: The two-stage experiment shows the architecture is sound but data-starved; sourcing more blockbuster records is the highest-leverage next step.
 - **Model upgrading**: Test XGBoost, LightGBM and other gradient boosting models with hyperparameter tuning for further performance gains.
 - **Temporal validation**: Adopt time-based cross-validation to better assess real-world generalisation for future releases.
 
